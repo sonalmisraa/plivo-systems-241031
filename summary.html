@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reliable UDP Streaming — Architecture Summary</title>
+<style>
+  :root { color-scheme: light; }
+  body { max-width: 1000px; margin: 0 auto; padding: 36px 24px 60px; font-family: Arial, Helvetica, sans-serif; line-height: 1.6; color: #1f2937; background: #f8fafc; }
+  h1, h2, h3 { color: #0f3d63; }
+  h1 { margin-bottom: 6px; }
+  .subtitle { margin-top: 0; color: #52606d; }
+  section { background: white; margin: 20px 0; padding: 22px 26px; border: 1px solid #dbe3ea; border-radius: 10px; }
+  code, pre { font-family: Menlo, Consolas, monospace; }
+  code { background: #eef2f6; padding: 2px 5px; border-radius: 4px; }
+  pre { overflow-x: auto; background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { border: 1px solid #cbd5e1; padding: 9px 11px; text-align: left; }
+  th { background: #eaf1f7; }
+  .valid { font-weight: bold; color: #146c43; }
+  .invalid { font-weight: bold; color: #b42318; }
+</style>
+</head>
+<body>
+<h1>Reliable UDP Frame Streaming with XOR Forward Error Correction</h1>
+<p class="subtitle">Final architecture and design decisions for the Flaky Network assignment</p>
+
+<section>
+<h2>1. Problem and objective</h2>
+<p>The harness produces one 160-byte frame every 20 ms. Frames cross an impaired UDP relay that may drop, delay, reorder, or duplicate packets. A frame is successful only when its correct sequence number and payload reach the player before its configured deadline.</p>
+<p>The implementation must keep deadline misses at or below 1.00%, bandwidth overhead at or below 2.00x, and then minimize playout delay.</p>
+</section>
+
+<section>
+<h2>2. End-to-end architecture</h2>
+<pre>Harness source :47010
+        |
+        v
+     sender
+        |
+        | DATA + XOR PARITY packets
+        v
+Hostile relay :47001 -> :47002
+        |
+        v
+     receiver
+        |
+        | original or reconstructed harness frames
+        v
+Harness player :47020</pre>
+<p>The sender and receiver communicate only through the relay path. The final design does not use the optional feedback channel.</p>
+</section>
+
+<section>
+<h2>3. Wire protocol</h2>
+<p>The sender-to-receiver protocol uses a packed packet structure:</p>
+<table>
+<tr><th>Field</th><th>Size</th><th>Purpose</th></tr>
+<tr><td>Sequence number</td><td>4 bytes</td><td>Identifies the original stream frame</td></tr>
+<tr><td>FEC group</td><td>2 bytes</td><td>Identifies the pair of frames protected together</td></tr>
+<tr><td>Packet type</td><td>1 byte</td><td>Distinguishes DATA from PARITY</td></tr>
+<tr><td>Payload</td><td>160 bytes</td><td>Original frame or XOR parity bytes</td></tr>
+</table>
+<p>The sequence number and group identifier are converted to network byte order before transmission and converted back at the receiver.</p>
+</section>
+
+<section>
+<h2>4. Sender design</h2>
+<p>Each source frame is forwarded immediately as a DATA packet. Consecutive frames are grouped in pairs. For each pair, the sender computes:</p>
+<pre>parity[b] = first_payload[b] XOR second_payload[b]
+for every payload byte b</pre>
+<p>After the second DATA packet of a group is sent, the sender sends one PARITY packet. Therefore, every two source frames produce three relay packets.</p>
+<p>This choice intentionally spends additional bandwidth to reduce recovery delay. A 4+1 design waits three frame intervals before parity for the first frame can exist, whereas the 2+1 design waits only one 20 ms interval.</p>
+</section>
+
+<section>
+<h2>5. Receiver design</h2>
+<h3>Packet validation</h3>
+<p>The receiver rejects packets with an unexpected size, out-of-range group or sequence number, or a DATA packet whose sequence number is inconsistent with its claimed FEC group.</p>
+<h3>Duplicate and reordering handling</h3>
+<p>Packets may arrive out of order. Group state independently records which DATA payloads and parity payload have arrived. An atomic flag associated with every output frame ensures that only the first valid original or recovered copy is forwarded.</p>
+<h3>Immediate forwarding</h3>
+<p>A valid DATA frame is sent directly to the player as soon as it reaches the receiver. The receiver does not wait until the nominal playback deadline because the harness accepts any correct arrival at or before that deadline. Immediate forwarding maximizes timing margin and avoids scheduler wake-up error.</p>
+<h3>FEC recovery</h3>
+<p>When parity and exactly one of the two DATA packets are present, the missing payload is reconstructed:</p>
+<pre>missing_payload = parity_payload XOR received_payload</pre>
+<p>The reconstructed frame is then forwarded through the same duplicate-safe output path.</p>
+</section>
+
+<section>
+<h2>6. Why retransmission was not used</h2>
+<p>A retransmission request would have to cross the hostile relay from receiver to sender, and the replacement frame would then have to cross it again. Both messages may be delayed or lost, making retransmission unsuitable for tight real-time deadlines. Forward error correction sends recovery information in advance and requires no round trip.</p>
+</section>
+
+<section>
+<h2>7. Bandwidth analysis</h2>
+<p>The packed protocol packet is 167 bytes: 7 bytes of metadata and 160 bytes of payload. The 2+1 design sends three packets per two raw frames. In the measured 1500-frame runs, it sent 2250 packets and 375750 bytes through the relay, corresponding to 1.57x overhead. This remains below the 2.00x limit.</p>
+</section>
+
+<section>
+<h2>8. Verified results</h2>
+<table>
+<tr><th>Profile</th><th>Delay</th><th>Deadline misses</th><th>Overhead</th><th>Result</th></tr>
+<tr><td>A</td><td>40 ms</td><td>13.00–13.53% across three recorded seeds</td><td>1.57x</td><td class="invalid">INVALID</td></tr>
+<tr><td>A</td><td>60 ms</td><td>11 / 1500 (0.73%)</td><td>1.57x</td><td class="valid">VALID</td></tr>
+<tr><td>B</td><td>120 ms</td><td>12 / 1500 (0.80%)</td><td>1.57x</td><td class="valid">VALID</td></tr>
+</table>
+<p>The recommended grading delay is <strong>120 ms</strong> because it is the verified valid operating point on the more demanding supplied profile.</p>
+</section>
+
+<section>
+<h2>9. Limitations</h2>
+<ul>
+<li>The XOR code can recover only one missing DATA packet per two-frame group.</li>
+<li>If both DATA packets are lost, recovery is impossible.</li>
+<li>If one DATA packet and the parity packet are both lost, recovery is impossible.</li>
+<li>Packets that arrive after the harness deadline cannot be made useful.</li>
+<li>The fixed 2+1 redundancy does not adapt to changing network conditions.</li>
+</ul>
+</section>
+
+<section>
+<h2>10. Final design summary</h2>
+<p>The final system uses a simple 2+1 XOR FEC protocol, immediate receiver forwarding, sequence-based validation, out-of-order storage, and atomic duplicate suppression. The design prioritizes recoverability and timing margin while remaining safely within the allowed bandwidth budget.</p>
+</section>
+</body>
+</html>
