@@ -99,13 +99,76 @@ for every payload byte b</pre>
 
 <section>
 <h2>8. Verified results</h2>
+
 <table>
-<tr><th>Profile</th><th>Delay</th><th>Deadline misses</th><th>Overhead</th><th>Result</th></tr>
-<tr><td>A</td><td>40 ms</td><td>13.00–13.53% across three recorded seeds</td><td>1.57x</td><td class="invalid">INVALID</td></tr>
-<tr><td>A</td><td>60 ms</td><td>11 / 1500 (0.73%)</td><td>1.57x</td><td class="valid">VALID</td></tr>
-<tr><td>B</td><td>120 ms</td><td>12 / 1500 (0.80%)</td><td>1.57x</td><td class="valid">VALID</td></tr>
+<tr>
+<th>Profile</th>
+<th>Delay</th>
+<th>Deadline misses</th>
+<th>Bandwidth overhead</th>
+<th>Result</th>
+</tr>
+
+<tr>
+<td>A</td>
+<td>40 ms</td>
+<td>13.00–13.53% across three recorded seeds</td>
+<td>1.57x</td>
+<td class="invalid">INVALID</td>
+</tr>
+
+<tr>
+<td>A</td>
+<td>60 ms</td>
+<td>10 / 1500 (0.67%)</td>
+<td>1.57x</td>
+<td class="valid">VALID</td>
+</tr>
+
+<tr>
+<td>B</td>
+<td>120 ms</td>
+<td>12 / 1500 (0.80%)</td>
+<td>1.57x</td>
+<td class="valid">VALID</td>
+</tr>
+
+<tr>
+<td>B</td>
+<td>110 ms</td>
+<td>12 / 1500 (0.80%)</td>
+<td>1.57x</td>
+<td class="valid">VALID</td>
+</tr>
+
+<tr>
+<td>B</td>
+<td>100 ms</td>
+<td>15 / 1500 (1.00%)</td>
+<td>1.57x</td>
+<td class="valid">VALID</td>
+</tr>
+
+<tr>
+<td>B</td>
+<td>90 ms</td>
+<td>24 / 1500 (1.60%)</td>
+<td>1.57x</td>
+<td class="invalid">INVALID</td>
+</tr>
+
 </table>
-<p>The recommended grading delay is <strong>120 ms</strong> because it is the verified valid operating point on the more demanding supplied profile.</p>
+
+<p>
+The experiments identify the practical validity boundary for Profile B between
+<strong>90 ms</strong> and <strong>100 ms</strong>. Although the implementation
+remains valid at 100 ms, that operating point sits exactly on the permitted
+1.00% miss-rate limit. The recommended grading delay is therefore
+<strong>110 ms</strong>, which preserves the same measured 0.80% miss rate
+while reducing latency by 10 ms compared with the initial 120 ms operating
+point and providing additional safety margin on unseen network conditions.
+</p>
+
 </section>
 
 <section>
@@ -121,7 +184,7 @@ for every payload byte b</pre>
 
 <section>
 <h2>10. Final design summary</h2>
-<p>The final system uses a simple 2+1 XOR FEC protocol, immediate receiver forwarding, sequence-based validation, out-of-order storage, and atomic duplicate suppression. The design prioritizes recoverability and timing margin while remaining safely within the allowed bandwidth budget.</p>
+<p>The final system uses a simple 2+1 XOR FEC protocol, immediate receiver forwarding, sequence-based validation, out-of-order storage, and atomic duplicate suppression. The final implementation achieves a measured bandwidth overhead of 1.57× while demonstrating valid operation at 60 ms on Profile A and 100 ms on Profile B, with 110 ms recommended as the grading delay for additional robustness on unseen network conditions.</p>
 </section>
 </body>
 </html>
